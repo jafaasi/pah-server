@@ -63,75 +63,7 @@ export default function Home() {
     setAccuracyStats({ wins, total, rate: Math.round((wins / total) * 100) });
   }, [ghostLog]);
 
-  /* ── Data Sync (Hard-Linked v10.0) ── */
-  const fetchPrediction = useCallback(async () => {
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
-    setLoading(true);
-    try {
-      // Step 1: Attempt Vercel API
-      const res = await fetch(`/api/predict`);
-      const d: ServerResponse = await res.json();
 
-      if (d.ready) {
-        // Step 2: If Vercel is in 'Offline/Mock' mode, attempt Direct-Client Sync
-        if (!d.live.isProxy) {
-          console.log('Vercel Blocked. Attempting Direct-Link Bridge...');
-          // Optional: Add client-side fetch here if CORS-Proxy is needed
-        }
-
-        const lastIssue = d.live.currentIssue;
-        const lastResult = d.live.lastResult;
-
-        if (prevIssueRef.current && prevIssueRef.current !== lastIssue) {
-          /* Reconcile Accuracy */
-          setGhostLog(prev => prev.map(p => {
-            if (p.result !== undefined || !String(lastIssue).endsWith(String(p.issue).slice(-5))) return p;
-            const won = (p.verdict === 'BIG' && lastResult >= 5) || (p.verdict === 'SMALL' && lastResult < 5);
-            return { ...p, result: lastResult, won };
-          }));
-
-          /* Level Management */
-          const lastGhost = ghostLog.find(p => String(lastIssue).endsWith(String(p.issue).slice(-5)));
-          if (lastGhost && lastGhost.won === undefined) {
-             const isWin = (lastGhost.verdict === 'BIG' && lastResult >= 5) || (lastGhost.verdict === 'SMALL' && lastResult < 5);
-             if (isWin) {
-                setCurrentShadowLevel(1);
-             } else {
-                setCurrentShadowLevel((l: number) => (l >= 3 ? 1 : l + 1));
-             }
-          }
-
-          /* New Prediction */
-          const numericIssue = Number(d.prediction.nextIssue);
-          const newEntry: LogEntry = {
-            issue: numericIssue,
-            verdict: d.prediction.verdict,
-            digit: d.prediction.digit,
-            time: new Date().toLocaleTimeString(),
-            level: currentShadowLevel,
-          };
-          setGhostLog(prev => prev.some(p => p.issue === numericIssue) ? prev : [...prev.slice(-49), newEntry]);
-        }
-
-        prevIssueRef.current = lastIssue;
-        setCountdown(Number(d.live.timeUntilNextRound) || 30);
-        setData(d);
-      }
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); isFetchingRef.current = false; }
-  }, [currentShadowLevel, ghostLog]);
-
-  useEffect(() => {
-    fetchPrediction();
-    const interval = setInterval(fetchPrediction, 2500);
-    return () => clearInterval(interval);
-  }, [fetchPrediction]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setCountdown((prev: number) => (prev <= 0 ? 30 : prev - 1)), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   /* ── ANALYTICS: Digit Heatmap ── */
   const heatmap = useMemo(() => {
@@ -157,50 +89,69 @@ export default function Home() {
     return 'STABLE RESONANCE';
   }, [data?.live?.recentResults]);
 
-  /* ── CLIENT-SIDE PEER BRIDGE (Total Match v11.0) ── */
-  const [isClientSynced, setIsClientSynced] = useState<boolean>(false);
-  
-  const syncClientHistory = useCallback(async () => {
+  /* ── Data Sync (Local-Parity v11.0) ── */
+  const fetchPrediction = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    setLoading(true);
     try {
-      const ts = Date.now();
-      const PLATFORM_URL = 'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json';
-      const proxy = `https://corsproxy.io/?url=${encodeURIComponent(PLATFORM_URL + '?ts=' + ts)}`;
-      
-      const res = await fetch(proxy);
-      const data = await res.json();
-      
-      if (data.code === 0 && data.data?.list) {
-        // If we get real data, manually update the 'data' state to bypass Vercel fallback
-        setData(prev => {
-          if (!prev) return null;
-          return {
-            ...prev,
-            history: data.data.list.map((h: any) => ({
-              issue: h.issueNumber,
-              number: parseInt(h.number) || 0,
-              color: h.color,
-              bigSmall: (parseInt(h.number) || 0) >= 5 ? 'BIG' : 'SMALL'
-            })),
-            live: {
-              ...prev.live,
-              currentIssue: data.data.list[0].issueNumber,
-              lastResult: parseInt(data.data.list[0].number) || 0,
-              isProxy: true // Force proxy UI
-            }
+      const res = await fetch(`/api/predict`);
+      const d: ServerResponse = await res.json();
+
+      if (d.ready) {
+        const lastIssue = d.live.currentIssue;
+        const lastResult = d.live.lastResult;
+
+        if (prevIssueRef.current && prevIssueRef.current !== lastIssue) {
+          /* Reconcile Accuracy */
+          setGhostLog(prev => prev.map(p => {
+            if (p.result !== undefined || !String(lastIssue).endsWith(String(p.issue).slice(-5))) return p;
+            const won = (p.verdict === 'BIG' && lastResult >= 5) || (p.verdict === 'SMALL' && lastResult < 5);
+            return { ...p, result: lastResult, won };
+          }));
+
+          /* Level Management */
+          const lastGhost = ghostLog.find(p => String(lastIssue).endsWith(String(p.issue).slice(-5)));
+          if (lastGhost && lastGhost.won === false) {
+            setCurrentShadowLevel(prev => (prev < 3 ? prev + 1 : 1));
+          } else if (lastGhost && lastGhost.won === true) {
+            setCurrentShadowLevel(1);
+          }
+
+          /* Record New Entry */
+          const numericIssue = Number(d.prediction.nextIssue);
+          const newEntry: LogEntry = {
+            issue: numericIssue,
+            verdict: d.prediction.verdict,
+            digit: d.prediction.digit,
+            time: new Date().toLocaleTimeString(),
+            level: currentShadowLevel,
           };
-        });
-        setIsClientSynced(true);
+          setGhostLog(prev => prev.some(p => p.issue === numericIssue) ? prev : [...prev.slice(-49), newEntry]);
+        }
+        
+        setData(d);
+        setCountdown(Number(d.live.timeUntilNextRound) || 30);
+        prevIssueRef.current = lastIssue;
       }
-    } catch (e) {
-      console.warn('Client-Bridge Delayed. Retrying...');
+    } catch (err) {
+      console.error('Local Sync Error:', err);
+    } finally {
+      setLoading(false);
+      isFetchingRef.current = false;
     }
-  }, []);
+  }, [currentShadowLevel, ghostLog]);
 
   useEffect(() => {
-    syncClientHistory();
-    const interval = setInterval(syncClientHistory, 10000);
+    fetchPrediction();
+    const interval = setInterval(fetchPrediction, 2500);
     return () => clearInterval(interval);
-  }, [syncClientHistory]);
+  }, [fetchPrediction]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setCountdown((prev: number) => (prev <= 0 ? 30 : prev - 1)), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const p = data?.prediction;
   const conv = data?.convergence;
@@ -420,29 +371,6 @@ export default function Home() {
               </div>
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* ══ MANUAL CALIBRATION HUB (EMERGENCY) ══ */}
-      <div className="card glass-panel" style={{ marginTop: '20px', padding: '15px' }}>
-        <div className="stat-hdr" style={{ color: 'var(--warn)' }}>⚠ EMERGENCY CALIBRATION HUB</div>
-        <div style={{ padding: '10px 0', fontSize: '9px', color: 'var(--text2)' }}>
-          IF AUTO-SYNC IS DELAYED, TYPE THE LAST WINNING NUMBER TO FORCE A MASTER-LOCK:
-        </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {[0,1,2,3,4,5,6,7,8,9].map(n => (
-            <button 
-              key={n} 
-              onClick={() => alert(`Calibrating Master-Seed with digit: ${n}...`)}
-              className="btn-sync" 
-              style={{ flex: 1, padding: '8px 0', fontSize: '14px', border: '1px solid rgba(255,140,51,0.3)', color: 'var(--warn)' }}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
-        <div className="logo-sub" style={{ marginTop: '8px', textAlign: 'center' }}>
-          ✦ CLICKING WILL FORCE THE ENGINE TO RE-SEED BASED ON YOUR INPUT
         </div>
       </div>
 

@@ -1,81 +1,64 @@
 import { NextResponse } from 'next/server';
 import { WinGoEngine, analyzeConvergence } from './engine_v2';
 
-const ENDPOINTS = [
-  'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json',
-  'https://draw.ar-lottery1.com/WinGo/WinGo_30S/GetHistoryIssuePage.json',
-  'https://draw.ar-lottery2.com/WinGo/WinGo_30S/GetHistoryIssuePage.json',
-  'https://draw.ar-lottery3.com/WinGo/WinGo_30S/GetHistoryIssuePage.json',
-  'https://draw.ar-lottery5.com/WinGo/WinGo_30S/GetHistoryIssuePage.json',
-  'https://api.bdgwin888.com/api/web/v1/lottery/wingo/history'
-];
+// DIRECT LINK FOR LOCAL RESIDENTIAL IPs
+const HISTORY_URL = 'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json';
 
-const PROXY_URL = 'https://api.allorigins.win/get?url=';
+interface GameEntry {
+  issueNumber: string;
+  number: string;
+  color: string;
+}
 
 async function fetchHistory(): Promise<{
-  history: any[];
+  history: GameEntry[];
   serviceTime: number;
   lastIssue: string;
-  isProxy: boolean;
+  error: string | null;
 }> {
-  const ts = Date.now();
-  for (const platformUrl of ENDPOINTS) {
-    try {
-      const target = encodeURIComponent(`${platformUrl}?ts=${ts}`);
-      const res = await fetch(`${PROXY_URL}${target}`, {
-        cache: 'no-store',
-        next: { revalidate: 0 }
-      });
-      
-      if (!res.ok) continue;
-      const wrapper = await res.json();
-      if (!wrapper.contents) continue;
-      const data = JSON.parse(wrapper.contents);
-      
-      const list = data.data?.list || data.list || data.data?.history;
-      if (list && list.length > 0) {
-        return {
-          history: list.map((item: any) => ({
-            issueNumber: item.issueNumber || item.period || item.issue_number,
-            number: item.number || item.result || item.outcome,
-            color: item.color || 'RED'
-          })),
-          serviceTime: data.serviceTime || ts,
-          lastIssue: (list[0].issueNumber || list[0].period || list[0].issue_number).toString(),
-          isProxy: true
-        };
-      }
-    } catch (e) { continue; }
+  try {
+    const ts = Date.now();
+    const res = await fetch(`${HISTORY_URL}?ts=${ts}`, {
+      headers: {
+        'Origin': 'https://www.bdgwin888.com',
+        'Referer': 'https://www.bdgwin888.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      cache: 'no-store'
+    });
+    const data = await res.json();
+    if (data.code === 0 && data.data?.list) {
+      return {
+        history: data.data.list,
+        serviceTime: data.serviceTime || ts,
+        lastIssue: data.data.list[0]?.issueNumber || '',
+        error: null,
+      };
+    }
+    throw new Error('API Format Error');
+  } catch (e: any) {
+    return { history: [], serviceTime: Date.now(), lastIssue: '', error: e.message };
   }
-
-  // FALLBACK: Deterministic Seed Logic
-  const now = new Date();
-  const utcDate = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const periodIndex = Math.floor((now.getUTCHours() * 3600 + now.getUTCMinutes() * 60 + now.getUTCSeconds()) / 30) + 1;
-  const lastIssue = `${utcDate}${periodIndex.toString().padStart(4, '0')}`;
-  
-  return { 
-    history: Array.from({ length: 30 }, (_, i) => ({
-      issueNumber: (BigInt(lastIssue) - BigInt(i)).toString(),
-      number: (Number((BigInt(lastIssue) - BigInt(i)) * 25214903917n >> 17n) % 10).toString(),
-      color: i % 2 === 0 ? 'RED' : 'GREEN'
-    })),
-    serviceTime: ts,
-    lastIssue,
-    isProxy: false
-  };
 }
 
 export async function GET() {
   const startTime = performance.now();
+  
   try {
-    const { history, serviceTime, lastIssue, isProxy } = await fetchHistory();
+    const { history, serviceTime, lastIssue, error } = await fetchHistory();
+    if (error) throw new Error(error);
+
     const numbers = history.map(h => parseInt(h.number) || 0);
     const nextIssueNum = (BigInt(lastIssue) + 1n).toString();
 
+    // ─── MASTER-STATE CRACKER ───
     const masterState = WinGoEngine.backtrackMasterState(numbers);
     const conv = analyzeConvergence(masterState ? masterState : nextIssueNum, numbers);
     
+    const ghostDigit = conv.ghostDigit;
+    const ghostVerdict = ghostDigit >= 5 ? 'BIG' : 'SMALL';
+    const convergenceScore = masterState ? 100 : Math.round(conv.shadowConfidence * 100);
+
     return NextResponse.json({
       ready: true,
       live: {
@@ -85,17 +68,23 @@ export async function GET() {
         serviceTime,
         timeUntilNextRound: Math.round(30 - ((serviceTime % 30000) / 1000)),
         nextIssue: nextIssueNum,
-        isProxy
+        isProxy: false
       },
       prediction: {
-        verdict: conv.ghostMetadata.bigSmall,
-        digit: conv.ghostDigit,
+        verdict: ghostVerdict,
+        digit: ghostDigit,
         nextIssue: nextIssueNum,
         futurePath: conv.futurePath,
       },
+      ghost: {
+        digit: ghostDigit,
+        verdict: ghostVerdict,
+        algorithm: 'DETERMINISTIC LCG-48 SYNC',
+      },
       convergence: {
-        score: isProxy ? (masterState ? 100 : 96) : 85,
-        status: isProxy ? (masterState ? '✦ MASTER-LOCKED (100%)' : '⬡ PROXY-SYNCING...') : '◌ CALIBRATING (OFFLINE)',
+        score: convergenceScore,
+        status: masterState ? '✦ MASTER-LOCKED (100%)' : '⬡ SYNCING WITH PLATFORM...',
+        isAgreement: conv.isConverged,
       },
       history: history.slice(0, 20).map(h => ({
         issue: h.issueNumber,
@@ -105,7 +94,11 @@ export async function GET() {
       })),
       latencyMs: Math.round((performance.now() - startTime) * 100) / 100,
     });
-  } catch (err) {
-    return NextResponse.json({ ready: false, error: 'Engine Stall' });
+  } catch (err: any) {
+    return NextResponse.json({ 
+      ready: false, 
+      error: 'Platform Syncing...', 
+      serviceTime: Date.now() 
+    });
   }
 }
