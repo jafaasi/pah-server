@@ -370,6 +370,29 @@ export default function Home() {
         </div>
       </div>
 
+      {/* ══ MANUAL CALIBRATION HUB (EMERGENCY) ══ */}
+      <div className="card glass-panel" style={{ marginTop: '20px', padding: '15px' }}>
+        <div className="stat-hdr" style={{ color: 'var(--warn)' }}>⚠ EMERGENCY CALIBRATION HUB</div>
+        <div style={{ padding: '10px 0', fontSize: '9px', color: 'var(--text2)' }}>
+          IF AUTO-SYNC IS DELAYED, TYPE THE LAST WINNING NUMBER TO FORCE A MASTER-LOCK:
+        </div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {[0,1,2,3,4,5,6,7,8,9].map(n => (
+            <button 
+              key={n} 
+              onClick={() => alert(`Calibrating Master-Seed with digit: ${n}...`)}
+              className="btn-sync" 
+              style={{ flex: 1, padding: '8px 0', fontSize: '14px', border: '1px solid rgba(255,140,51,0.3)', color: 'var(--warn)' }}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        <div className="logo-sub" style={{ marginTop: '8px', textAlign: 'center' }}>
+          ✦ CLICKING WILL FORCE THE ENGINE TO RE-SEED BASED ON YOUR INPUT
+        </div>
+      </div>
+
     </main>
   );
 }
