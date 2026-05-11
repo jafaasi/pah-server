@@ -157,6 +157,51 @@ export default function Home() {
     return 'STABLE RESONANCE';
   }, [data?.live?.recentResults]);
 
+  /* ── CLIENT-SIDE PEER BRIDGE (Total Match v11.0) ── */
+  const [isClientSynced, setIsClientSynced] = useState<boolean>(false);
+  
+  const syncClientHistory = useCallback(async () => {
+    try {
+      const ts = Date.now();
+      const PLATFORM_URL = 'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json';
+      const proxy = `https://corsproxy.io/?url=${encodeURIComponent(PLATFORM_URL + '?ts=' + ts)}`;
+      
+      const res = await fetch(proxy);
+      const data = await res.json();
+      
+      if (data.code === 0 && data.data?.list) {
+        // If we get real data, manually update the 'data' state to bypass Vercel fallback
+        setData(prev => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            history: data.data.list.map((h: any) => ({
+              issue: h.issueNumber,
+              number: parseInt(h.number) || 0,
+              color: h.color,
+              bigSmall: (parseInt(h.number) || 0) >= 5 ? 'BIG' : 'SMALL'
+            })),
+            live: {
+              ...prev.live,
+              currentIssue: data.data.list[0].issueNumber,
+              lastResult: parseInt(data.data.list[0].number) || 0,
+              isProxy: true // Force proxy UI
+            }
+          };
+        });
+        setIsClientSynced(true);
+      }
+    } catch (e) {
+      console.warn('Client-Bridge Delayed. Retrying...');
+    }
+  }, []);
+
+  useEffect(() => {
+    syncClientHistory();
+    const interval = setInterval(syncClientHistory, 10000);
+    return () => clearInterval(interval);
+  }, [syncClientHistory]);
+
   const p = data?.prediction;
   const conv = data?.convergence;
   const isMasterLocked = !!conv?.status?.includes('MASTER');
